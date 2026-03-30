@@ -2,7 +2,6 @@ import Fastify from 'fastify'
 import FastifyStatic from '@fastify/static'
 import FastifyCookie from '@fastify/cookie'
 import FastifySession from '@fastify/session'
-import { createServer } from 'http'
 import { Server } from 'socket.io'
 import { fileURLToPath } from 'url'
 import { join, dirname } from 'path'
@@ -34,9 +33,8 @@ fastify.register(FastifySession, {
 // Discord OAuth
 fastify.register(authRoutes)
 
-// HTTP server + Socket.io
-const httpServer = createServer(fastify.server)
-const io = new Server(httpServer, {
+// Attach Socket.io directly to Fastify's underlying http server
+const io = new Server(fastify.server, {
   cors: { origin: process.env.CLIENT_URL || 'http://localhost:3000', credentials: true }
 })
 
