@@ -3,188 +3,53 @@ import { Player } from '../entities/Player'
 import { TaliaCharacter } from '../entities/TaliaCharacter'
 import { DialogueManager } from '../ui/DialogueManager'
 
-const T = 16           // tile size px
-const W = 64           // world width in tiles
-const H = 48           // world height in tiles
+const T = 16
+const W = 64   // world tiles wide
+const H = 48   // world tiles tall
 
-// ─── Tile IDs (col, row into 1.png, 30 cols × 48 rows) ──────────────────────
-// Helper: encode as single number for map arrays
-const tid = (col: number, row: number) => row * 30 + col
+// ─── Verified tile IDs ──────────────────────────────────────────────────────
+// Encode as [tileset_number, col, row]
+type TileRef = [number, number, number]
 
-// Grass fill variants (confirmed clean)
-const GR = [tid(1,3), tid(2,3), tid(1,2), tid(2,2), tid(7,3), tid(8,3)]
+// 1.png — main terrain (30 cols × 48 rows)
+const GRASS: TileRef[]   = [[1,1,3],[1,2,3],[1,1,2],[1,2,2],[1,7,3],[1,8,3]]
+// Water interior — solid blue (121,156,255)
+const WATER: TileRef[]   = [[1,2,8],[1,3,8],[1,2,9],[1,3,9]]
+// Shore tiles — placed AT water edge positions (contain land+water)
+const SH_TOP: TileRef    = [1,2,7]    // full solid — grass top, water bottom
+const SH_BOT: TileRef    = [1,2,10]   // water top, grass bottom
+const SH_L:   TileRef    = [1,0,8]    // water right, transparent left
+const SH_R:   TileRef    = [1,5,8]    // water left, transparent right
+const SH_TL:  TileRef    = [1,1,6]    // corner: water in BR
+const SH_TR:  TileRef    = [1,4,6]    // corner: water in BL
+const SH_BL:  TileRef    = [1,1,10]   // corner: water in TR
+const SH_BR:  TileRef    = [1,4,10]   // corner: water in TL
 
-// Water fill (interior lake)
-const WA = tid(2,9)
-const WA2 = tid(3,8)
+// 7.png — cliff tiles on grass (35 cols × 12 rows)
+// Verified brown/tan: (9,3)(10,3)(8,4)(9,4) etc
+const CLIFF:  TileRef[]  = [[7,9,3],[7,10,3],[7,8,4],[7,9,4],[7,10,4],[7,8,5],[7,9,5],[7,10,5]]
+// Cliff face (darker, bottom edge of ridge)
+const CLIFF_FACE: TileRef[] = [[7,0,7],[7,1,7],[7,5,7],[7,0,8],[7,1,8],[7,4,8],[7,5,8]]
+// Grass on top of cliff (7.png has its own grass tiles: bright green)
+const CLIFF_GRASS: TileRef[] = [[7,2,3],[7,3,3],[7,1,4],[7,2,4],[7,3,4],[7,4,4]]
 
-// Water shore autotiles (transparent edges — layer over grass+water)
-const SH_T  = tid(2,7)   // shore top edge
-const SH_B  = tid(2,10)  // shore bottom edge
-const SH_L  = tid(0,8)   // shore left edge
-const SH_R  = tid(5,8)   // shore right edge
-const SH_TL = tid(1,6)   // top-left outer corner
-const SH_TR = tid(4,6)   // top-right outer corner
-const SH_BL = tid(1,10)  // bottom-left outer corner
-const SH_BR = tid(4,10)  // bottom-right outer corner
-// Inner concave corners
-const SH_ITL = tid(9,9)  // inner top-left (land nub in TL of water)
-const SH_ITR = tid(6,9)  // inner top-right
-const SH_IBL = tid(9,7)  // inner bottom-left
-const SH_IBR = tid(6,7)  // inner bottom-right
+// 10.png — dirt path (14 cols × 20 rows)
+// Verified warm tan: (6,10)(7,10)(6,11)(7,11)
+const PATH: TileRef[]    = [[10,6,10],[10,7,10],[10,6,11],[10,7,11],[10,0,10],[10,1,10]]
 
-// Sand/dirt path fill
-const SA = tid(12,21)
-const SA2 = tid(13,21)
-
-// Brown cliff fill (raised ridge top-surface)
-const CF = tid(2,38)
-// Cliff top edge (grass-to-cliff transition, top side)
-const CF_T = tid(2,37)
-const CF_TL = tid(1,37)
-const CF_TR = tid(4,37)
-const CF_L  = tid(0,38)
-const CF_R  = tid(5,38)
-const CF_BL = tid(0,41)
-const CF_BR = tid(5,41)
-const CF_B  = tid(2,41)
-
-const __ = -1  // empty / no override
-
-// ─── Map layers ──────────────────────────────────────────────────────────────
-// We use 3 passes:
-// 1. Base grass (auto-varied, W×H)
-// 2. Terrain overlay (water, sand, cliff patches)
-// 3. Shore autotiles (transparent, drawn on top)
-
-// Terrain overlay map — defines what terrain sits at each tile position
-// 0 = grass (default), WA = water, SA = sand, CF = cliff-top
-// This is a SPARSE representation: [tx, ty, tileId] triples
-
-interface TileOverride { x: number; y: number; id: number }
-
-function makeMapData(): { water: TileOverride[], sand: TileOverride[], cliff: TileOverride[], shore: TileOverride[] } {
-  const water: TileOverride[] = []
-  const sand:  TileOverride[] = []
-  const cliff: TileOverride[] = []
-  const shore: TileOverride[] = []
-
-  // ── LAKE: southwest corner, diagonal shoreline ──────────────────────────
-  // Lake body: roughly cols 0-18, rows 28-47 (SW quadrant)
-  // Diagonal NE shore runs from ~(0,16) to (20,36)
-  // Approximate the diagonal with stair steps (each step = 1 tile right, 1 tile down)
-  
-  // Lake fill
-  for (let ty = 30; ty < H; ty++) {
-    for (let tx = 0; tx < W; tx++) {
-      // Diagonal edge: for each row, the lake extends from left up to col = tx_edge
-      const tx_edge = Math.round(tx - (ty - 30) * 0.7)  // slope ~0.7
-      if (tx < tx_edge && ty > 28) {
-        water.push({ x: tx, y: ty, id: (tx + ty) % 2 === 0 ? WA : WA2 })
-      }
-    }
-  }
-  // Simpler: define lake as all tiles where tx + ty*0.7 < 22
-  // This creates the SW diagonal lake
-
-  water.length = 0  // reset and use explicit approach
-
-  // Lake: fill lower-left, SW corner
-  // Shore diagonal runs roughly: row 16 → col 20, row 36 → col 0
-  // Line: col = 20 - (row - 16)
-  for (let ty = 0; ty < H; ty++) {
-    for (let tx = 0; tx < W; tx++) {
-      const shoreCol = 22 - (ty - 14)  // diagonal edge column at this row
-      if (tx < shoreCol && ty > 14) {
-        water.push({ x: tx, y: ty, id: (tx ^ ty) % 3 === 0 ? WA2 : WA })
-      }
-    }
-  }
-
-  // ── SAND PATH: vertical path center-right, leading to Talia ──────────────
-  const pathCenterX = Math.round(W * 0.62)  // ~col 40
-  const taliaY = Math.round(H * 0.28)        // Talia is at ~row 13
-  for (let ty = taliaY + 1; ty < H - 3; ty++) {
-    for (let dx = -2; dx <= 2; dx++) {
-      const tx = pathCenterX + dx
-      if (tx >= 0 && tx < W) {
-        sand.push({ x: tx, y: ty, id: (tx + ty) % 2 === 0 ? SA : SA2 })
-      }
-    }
-  }
-  // Path widens at bottom
-  for (let ty = H - 12; ty < H - 2; ty++) {
-    for (let dx = -4; dx <= 4; dx++) {
-      const tx = pathCenterX + dx
-      if (tx >= 0 && tx < W) {
-        sand.push({ x: tx, y: ty, id: SA })
-      }
-    }
-  }
-
-  // ── CLIFF RIDGES: horizontal brown rocky ridges ───────────────────────────
-  // Main ridge: roughly rows 18-22, with gaps and curves
-  // From reference: 2 main curved ridges running E-W with tree-filled gaps
-
-  // Ridge 1: row 17-20, cols 15-55 (with gap around path)
-  for (let tx = 15; tx < 55; tx++) {
-    if (tx >= pathCenterX - 3 && tx <= pathCenterX + 3) continue  // gap for path
-    for (let ty = 17; ty <= 20; ty++) {
-      cliff.push({ x: tx, y: ty, id: CF })
-    }
-  }
-
-  // Ridge 2: row 26-29, cols 8-48 (offset, curved)
-  for (let tx = 8; tx < 48; tx++) {
-    if (tx >= pathCenterX - 3 && tx <= pathCenterX + 3) continue
-    const rowOffset = tx < 25 ? 1 : tx > 40 ? -1 : 0
-    for (let ty = 26 + rowOffset; ty <= 29 + rowOffset; ty++) {
-      cliff.push({ x: tx, y: ty, id: CF })
-    }
-  }
-
-  // ── SHORE TRANSITION TILES ────────────────────────────────────────────────
-  // Build a Set of water tiles for quick lookup
-  const waterSet = new Set(water.map(w => `${w.x},${w.y}`))
-  const isWater = (x: number, y: number) => waterSet.has(`${x},${y}`)
-
-  for (const w of water) {
-    const { x: tx, y: ty } = w
-    const hasTop    = !isWater(tx,   ty-1)
-    const hasBottom = !isWater(tx,   ty+1)
-    const hasLeft   = !isWater(tx-1, ty)
-    const hasRight  = !isWater(tx+1, ty)
-
-    if (hasTop && hasLeft)  shore.push({ x: tx, y: ty, id: SH_TL })
-    else if (hasTop && hasRight) shore.push({ x: tx, y: ty, id: SH_TR })
-    else if (hasBottom && hasLeft)  shore.push({ x: tx, y: ty, id: SH_BL })
-    else if (hasBottom && hasRight) shore.push({ x: tx, y: ty, id: SH_BR })
-    else if (hasTop)    shore.push({ x: tx, y: ty, id: SH_T })
-    else if (hasBottom) shore.push({ x: tx, y: ty, id: SH_B })
-    else if (hasLeft)   shore.push({ x: tx, y: ty, id: SH_L })
-    else if (hasRight)  shore.push({ x: tx, y: ty, id: SH_R })
-  }
-
-  return { water, sand, cliff, shore }
-}
-
-// ─── Prop definitions from 3.png (verified clean) ───────────────────────────
-interface PropDef {
-  sx: number; sy: number; sw: number; sh: number
-  colX: number; colY: number; colW: number; colH: number
-}
-
+// 3.png — props (verified)
+interface PropDef { sx:number; sy:number; sw:number; sh:number; colX:number; colY:number; colW:number; colH:number }
 const PROPS: Record<string, PropDef> = {
-  tree:    { sx:   0, sy:  0, sw: 64, sh: 64, colX:-14, colY: -8, colW:28, colH:16 },
-  treeMed: { sx: 144, sy:  0, sw: 48, sh: 64, colX:-10, colY: -6, colW:20, colH:14 },
-  treeAlt: { sx: 192, sy:  0, sw: 48, sh: 64, colX:-10, colY: -6, colW:20, colH:14 },
-  rockSm:  { sx:  64, sy: 96, sw: 32, sh: 32, colX: -8, colY: -8, colW:16, colH:14 },
-  rockSm2: { sx:  96, sy: 96, sw: 32, sh: 32, colX: -8, colY: -8, colW:16, colH:14 },
-  boulder: { sx: 352, sy:  0, sw: 64, sh: 64, colX:-16, colY:-14, colW:32, colH:22 },
-  well:    { sx:   0, sy: 64, sw: 48, sh: 64, colX:-12, colY:-12, colW:24, colH:20 },
+  tree:    { sx:0,   sy:0,  sw:64, sh:64, colX:-14, colY:-8,  colW:28, colH:16 },
+  treeMed: { sx:144, sy:0,  sw:48, sh:64, colX:-10, colY:-6,  colW:20, colH:14 },
+  treeAlt: { sx:192, sy:0,  sw:48, sh:64, colX:-10, colY:-6,  colW:20, colH:14 },
+  rockSm:  { sx:64,  sy:96, sw:32, sh:32, colX:-8,  colY:-8,  colW:16, colH:14 },
+  boulder: { sx:352, sy:0,  sw:64, sh:64, colX:-16, colY:-14, colW:32, colH:22 },
+  well:    { sx:0,   sy:64, sw:48, sh:64, colX:-12, colY:-12, colW:24, colH:20 },
 }
 
-interface Collidable { x: number; y: number; w: number; h: number }
+interface Collidable { x:number; y:number; w:number; h:number }
+interface PlacedTile { x:number; y:number; ref:TileRef }
 
 export class WorldScene {
   container: Container
@@ -193,10 +58,12 @@ export class WorldScene {
   private talia!: TaliaCharacter
   private dialogue: DialogueManager
   private worldContainer: Container
-  private keys: Record<string, boolean> = {}
+  private keys: Record<string,boolean> = {}
   private collidables: Collidable[] = []
-  private waterTiles: Array<{ sprite: Sprite; baseY: number }> = []
+  private waterSprites: Array<{sprite:Sprite; baseX:number; baseY:number}> = []
   private animTick = 0
+  private texCache = new Map<string,Texture>()
+  private tilesets = new Map<number, Texture>()
 
   constructor(app: Application, dialogue: DialogueManager) {
     this.app = app
@@ -209,163 +76,322 @@ export class WorldScene {
   }
 
   private async loadAndBuild() {
-    let terrainTex: Texture | null = null
-    let propsTex: Texture | null = null
-
     try {
       await Assets.load([
-        { alias: 'terrain', src: '/assets/tilesets/1.png' },
-        { alias: 'props3',  src: '/assets/tilesets/3.png' },
+        { alias: 'ts1',  src: '/assets/tilesets/1.png'  },
+        { alias: 'ts7',  src: '/assets/tilesets/7.png'  },
+        { alias: 'ts10', src: '/assets/tilesets/10.png' },
+        { alias: 'ts3',  src: '/assets/tilesets/3.png'  },
       ])
-      terrainTex = Assets.get('terrain')
-      propsTex   = Assets.get('props3')
-    } catch (e) {
+      this.tilesets.set(1,  Assets.get('ts1'))
+      this.tilesets.set(7,  Assets.get('ts7'))
+      this.tilesets.set(10, Assets.get('ts10'))
+      this.tilesets.set(3,  Assets.get('ts3'))
+    } catch(e) {
       console.warn('[world] Asset load failed:', e)
     }
 
-    if (!terrainTex) { this.buildFallback(); this.spawnCharacters(); return }
-
-    const mapData = makeMapData()
-
-    // ── Layer 0: Base grass ──────────────────────────────────────────────
-    this.buildGrassBase(terrainTex)
-
-    // ── Layer 1: Water ──────────────────────────────────────────────────
-    this.buildWater(terrainTex, mapData.water)
-
-    // ── Layer 2: Shore autotiles ─────────────────────────────────────────
-    this.buildTileLayer(terrainTex, mapData.shore)
-
-    // ── Layer 3: Sand path ───────────────────────────────────────────────
-    this.buildTileLayer(terrainTex, mapData.sand)
-
-    // ── Layer 4: Cliff ridges ────────────────────────────────────────────
-    this.buildTileLayer(terrainTex, mapData.cliff)
-
-    // ── Layer 5: Props ───────────────────────────────────────────────────
-    if (propsTex) this.buildProps(propsTex, mapData)
-
+    this.buildMap()
     this.spawnCharacters()
   }
 
-  // ── Tile rendering helpers ────────────────────────────────────────────────
+  // ── Texture helper ────────────────────────────────────────────────────────
 
-  private tileTexCache = new Map<number, Texture>()
-  private getTex(terrainTex: Texture, tileId: number): Texture {
-    if (this.tileTexCache.has(tileId)) return this.tileTexCache.get(tileId)!
-    const col = tileId % 30
-    const row = Math.floor(tileId / 30)
-    const tex = new Texture({ source: terrainTex.source, frame: new Rectangle(col*T, row*T, T, T) })
-    this.tileTexCache.set(tileId, tex)
+  private getTex([tsId, col, row]: TileRef): Texture | null {
+    const key = `${tsId}_${col}_${row}`
+    if (this.texCache.has(key)) return this.texCache.get(key)!
+    const ts = this.tilesets.get(tsId)
+    if (!ts) return null
+    const tex = new Texture({ source: ts.source, frame: new Rectangle(col*T, row*T, T, T) })
+    this.texCache.set(key, tex)
     return tex
   }
 
-  private buildGrassBase(tex: Texture) {
-    const variants = GR.map(id => this.getTex(tex, id))
-    const rand = (x: number, y: number) => ((x * 1619 + y * 31337) & 0xffff) / 0xffff
+  private getPropsTexture(def: PropDef): Texture | null {
+    const ts = this.tilesets.get(3)
+    if (!ts) return null
+    const key = `props_${def.sx}_${def.sy}_${def.sw}_${def.sh}`
+    if (this.texCache.has(key)) return this.texCache.get(key)!
+    const tex = new Texture({ source: ts.source, frame: new Rectangle(def.sx, def.sy, def.sw, def.sh) })
+    this.texCache.set(key, tex)
+    return tex
+  }
+
+  private sprite(ref: TileRef, x: number, y: number, isWater=false): Sprite | null {
+    const tex = this.getTex(ref)
+    if (!tex) return null
+    const s = new Sprite(tex)
+    s.x = x; s.y = y
+    if (isWater) this.waterSprites.push({ sprite: s, baseX: x, baseY: y })
+    return s
+  }
+
+  // ── Map generation ────────────────────────────────────────────────────────
+
+  private buildMap() {
+    if (this.tilesets.size === 0) { this.buildFallback(); return }
+
+    // Determine map zones
+    const { waterSet, shoreMap, pathSet, cliffSet, cliffFaceSet } = this.generateZones()
+
+    // ── Layer 0: Grass base ──────────────────────────────────────────────
+    const rand = (x:number,y:number) => ((x*1619+y*31337)&0xffff)/0xffff
     for (let ty = 0; ty < H; ty++) {
       for (let tx = 0; tx < W; tx++) {
-        const r = rand(tx, ty)
-        const idx = r < 0.5 ? 0 : r < 0.7 ? 1 : r < 0.82 ? 2 : r < 0.9 ? 3 : r < 0.95 ? 4 : 5
-        const s = new Sprite(variants[idx])
-        s.x = tx * T; s.y = ty * T
-        this.worldContainer.addChild(s)
+        const k = `${tx},${ty}`
+        if (waterSet.has(k) || shoreMap.has(k)) continue  // will be drawn as water/shore
+        
+        // Cliff top uses 7.png grass for matching color
+        let grassRef: TileRef
+        if (cliffSet.has(k)) {
+          const idx = Math.floor(rand(tx,ty) * CLIFF_GRASS.length)
+          grassRef = CLIFF_GRASS[idx]
+        } else {
+          const r = rand(tx,ty)
+          grassRef = GRASS[Math.floor(r * GRASS.length)]
+        }
+        const s = this.sprite(grassRef, tx*T, ty*T)
+        if (s) this.worldContainer.addChild(s)
       }
     }
+
+    // ── Layer 1: Water fills ─────────────────────────────────────────────
+    for (const k of waterSet) {
+      const [tx, ty] = k.split(',').map(Number)
+      const r = rand(tx, ty)
+      const ref = WATER[Math.floor(r * WATER.length)]
+      const s = this.sprite(ref, tx*T, ty*T, true)
+      if (s) this.worldContainer.addChild(s)
+      this.collidables.push({ x: tx*T, y: ty*T, w: T, h: T })
+    }
+
+    // ── Layer 2: Shore tiles (placed AT boundary, already contain transition) ──
+    for (const [k, ref] of shoreMap) {
+      const [tx, ty] = k.split(',').map(Number)
+      const s = this.sprite(ref, tx*T, ty*T, false)
+      if (s) this.worldContainer.addChild(s)
+      this.collidables.push({ x: tx*T, y: ty*T, w: T, h: T })
+    }
+
+    // ── Layer 3: Path ────────────────────────────────────────────────────
+    for (const k of pathSet) {
+      const [tx, ty] = k.split(',').map(Number)
+      const r = rand(tx,ty)
+      const ref = PATH[Math.floor(r * PATH.length)]
+      const s = this.sprite(ref, tx*T, ty*T)
+      if (s) this.worldContainer.addChild(s)
+    }
+
+    // ── Layer 4: Cliff fill (brown rocky ridge top) ──────────────────────
+    for (const k of cliffSet) {
+      const [tx, ty] = k.split(',').map(Number)
+      const r = rand(tx,ty)
+      const ref = CLIFF[Math.floor(r * CLIFF.length)]
+      const s = this.sprite(ref, tx*T, ty*T)
+      if (s) this.worldContainer.addChild(s)
+      this.collidables.push({ x: tx*T, y: ty*T, w: T, h: T })
+    }
+
+    // ── Layer 5: Cliff face (south edge of each ridge) ──────────────────
+    for (const k of cliffFaceSet) {
+      const [tx, ty] = k.split(',').map(Number)
+      const r = rand(tx,ty)
+      const ref = CLIFF_FACE[Math.floor(r * CLIFF_FACE.length)]
+      const s = this.sprite(ref, tx*T, ty*T)
+      if (s) this.worldContainer.addChild(s)
+    }
+
+    // ── Layer 6: Props ───────────────────────────────────────────────────
+    this.buildProps(waterSet, cliffSet)
   }
 
-  private buildWater(tex: Texture, waterTiles: TileOverride[]) {
-    const t1 = this.getTex(tex, WA)
-    const t2 = this.getTex(tex, WA2)
-    for (const { x, y, id } of waterTiles) {
-      const s = new Sprite(id === WA ? t1 : t2)
-      s.x = x * T; s.y = y * T
-      this.worldContainer.addChild(s)
-      this.waterTiles.push({ sprite: s, baseY: y * T })
-    }
-  }
+  private generateZones() {
+    const waterSet    = new Set<string>()
+    const shoreMap    = new Map<string, TileRef>()
+    const pathSet     = new Set<string>()
+    const cliffSet    = new Set<string>()
+    const cliffFaceSet = new Set<string>()
 
-  private buildTileLayer(tex: Texture, tiles: TileOverride[]) {
-    for (const { x, y, id } of tiles) {
-      const s = new Sprite(this.getTex(tex, id))
-      s.x = x * T; s.y = y * T
-      this.worldContainer.addChild(s)
+    // ── LAKE: SW quadrant, diagonal NE shoreline ─────────────────────────
+    // Shore runs top-right to bottom-left: col = 20 - (row - 10)
+    // Tiles left of the line AND below row 10 are water
+    const shoreLineCol = (ty: number) => Math.round(22 - (ty - 10))
+
+    for (let ty = 10; ty < H; ty++) {
+      const edge = shoreLineCol(ty)
+      for (let tx = 0; tx < W; tx++) {
+        if (tx < edge - 1) {
+          // Deep water — interior
+          waterSet.add(`${tx},${ty}`)
+        }
+      }
     }
+
+    // Shore tiles: tiles at the boundary (tx === edge-1) get shore sprites
+    for (let ty = 10; ty < H; ty++) {
+      const edge = shoreLineCol(ty)
+      const edgeTx = edge - 1  // the transition tile column
+
+      if (edgeTx < 0 || edgeTx >= W) continue
+
+      // Determine the shore orientation by checking neighbors
+      const prevEdge = shoreLineCol(ty - 1)
+      const nextEdge = shoreLineCol(ty + 1)
+
+      if (ty === 10) {
+        // Top-most row: top shore
+        for (let tx = 0; tx < edgeTx; tx++) {
+          shoreMap.set(`${tx},${ty}`, SH_TOP)
+        }
+        shoreMap.set(`${edgeTx},${ty}`, SH_TR)
+      } else {
+        // Right edge of water (where water meets grass on the right)
+        shoreMap.set(`${edgeTx},${ty}`, SH_R)
+        // Top shore for the step
+        if (edgeTx > prevEdge - 1) {
+          // Shore stepped left — add top shore for the new tiles
+          for (let tx = edgeTx; tx < prevEdge; tx++) {
+            if (!shoreMap.has(`${tx},${ty}`) && !waterSet.has(`${tx},${ty}`)) {
+              shoreMap.set(`${tx},${ty}`, SH_TOP)
+            }
+          }
+        }
+      }
+    }
+
+    // Left border of water (all water rows, leftmost)
+    for (let ty = 11; ty < H; ty++) {
+      for (let tx = 0; tx <= 1; tx++) {
+        if (waterSet.has(`${tx},${ty}`)) {
+          shoreMap.set(`${tx},${ty}`, tx === 0 ? SH_L : SH_L)
+        }
+      }
+    }
+
+    // Bottom water row — shore at bottom
+    for (let tx = 0; tx < shoreLineCol(H-1) - 1; tx++) {
+      if (!shoreMap.has(`${tx},${H-1}`)) {
+        shoreMap.set(`${tx},${H-1}`, SH_BOT)
+      }
+    }
+
+    // Clean up: remove shoreMap entries that are in waterSet
+    for (const k of [...shoreMap.keys()]) {
+      if (waterSet.has(k)) shoreMap.delete(k)
+    }
+
+    // ── PATH: vertical dirt path in right-center ─────────────────────────
+    const PATH_CX = Math.round(W * 0.62)  // ~col 39
+    const TALIA_ROW = Math.round(H * 0.28) // ~row 13
+    const PATH_WIDTH = 3
+
+    for (let ty = TALIA_ROW + 1; ty < H - 2; ty++) {
+      for (let dx = -PATH_WIDTH; dx <= PATH_WIDTH; dx++) {
+        const tx = PATH_CX + dx
+        if (tx >= 0 && tx < W && !waterSet.has(`${tx},${ty}`) && !shoreMap.has(`${tx},${ty}`)) {
+          pathSet.add(`${tx},${ty}`)
+        }
+      }
+    }
+    // Widen at bottom
+    for (let ty = H - 12; ty < H - 2; ty++) {
+      for (let dx = -6; dx <= 6; dx++) {
+        const tx = PATH_CX + dx
+        if (tx >= 0 && tx < W && !waterSet.has(`${tx},${ty}`)) {
+          pathSet.add(`${tx},${ty}`)
+        }
+      }
+    }
+
+    // ── CLIFF RIDGES: two E-W brown ridges ───────────────────────────────
+    const addRidge = (rowStart:number, rowEnd:number, colStart:number, colEnd:number) => {
+      for (let tx = colStart; tx <= colEnd; tx++) {
+        // Skip gap for path
+        if (tx >= PATH_CX - 4 && tx <= PATH_CX + 4) continue
+        if (waterSet.has(`${tx},${rowStart}`) || shoreMap.has(`${tx},${rowStart}`)) continue
+        for (let ty = rowStart; ty <= rowEnd; ty++) {
+          cliffSet.add(`${tx},${ty}`)
+        }
+        // Cliff face = one row below ridge
+        if (!waterSet.has(`${tx},${rowEnd+1}`)) {
+          cliffFaceSet.add(`${tx},${rowEnd+1}`)
+        }
+      }
+    }
+
+    // Ridge 1: ~row 18-19, cols 22-58
+    addRidge(18, 19, 22, 58)
+    // Ridge 2: ~row 27-28, cols 15-52 (offset left, slight downward curve east)
+    addRidge(27, 28, 15, 52)
+
+    return { waterSet, shoreMap, pathSet, cliffSet, cliffFaceSet }
   }
 
   // ── Props ─────────────────────────────────────────────────────────────────
 
-  private buildProps(propsTex: Texture, mapData: ReturnType<typeof makeMapData>) {
-    const waterSet = new Set(mapData.water.map(w => `${w.x},${w.y}`))
-    const cliffSet = new Set(mapData.cliff.map(c => `${c.x},${c.y}`))
-    const isBlocked = (tx: number, ty: number) =>
+  private buildProps(waterSet: Set<string>, cliffSet: Set<string>) {
+    const PATH_CX = Math.round(W * 0.62)
+    const TALIA_ROW = Math.round(H * 0.28)
+    const taliaX = PATH_CX * T
+    const taliaY = TALIA_ROW * T
+    const CLEAR = 80
+
+    const isBlocked = (tx:number, ty:number) =>
       waterSet.has(`${tx},${ty}`) || cliffSet.has(`${tx},${ty}`)
 
-    const taliaX = Math.round(W * 0.62) * T
-    const taliaY = Math.round(H * 0.28) * T
-    const CLEAR = 80  // px clear around Talia
+    let seed = 9999
+    const next = () => { seed = (seed*1664525+1013904223)&0x7fffffff; return seed/0x7fffffff }
 
-    const placements: Array<{ x: number; y: number; def: PropDef }> = []
+    const propKeys = ['tree','treeMed','treeAlt','rockSm','boulder']
+    const placements: Array<{x:number; y:number; def:PropDef}> = []
 
-    let seed = 7331
-    const next = () => { seed = (seed * 1664525 + 1013904223) & 0x7fffffff; return seed / 0x7fffffff }
-
-    const propKeys = Object.keys(PROPS).filter(k => k !== 'well')
-    const propDefs = propKeys.map(k => PROPS[k])
-
-    for (let i = 0; i < 120; i++) {
-      const tx = 2 + Math.floor(next() * (W - 4))
-      const ty = 2 + Math.floor(next() * (H - 4))
-      if (isBlocked(tx, ty) || isBlocked(tx, ty-1)) continue
-      const px = tx * T, py = ty * T
-      if (Math.hypot(px - taliaX, py - taliaY) < CLEAR) continue
-      const def = propDefs[Math.floor(next() * propDefs.length)]
-      const tooClose = placements.some(p => Math.hypot(px - p.x, py - p.y) < 28)
-      if (tooClose) continue
-      placements.push({ x: px, y: py, def })
+    for (let i = 0; i < 100; i++) {
+      const tx = 2 + Math.floor(next() * (W-4))
+      const ty = 2 + Math.floor(next() * (H-4))
+      if (isBlocked(tx, ty)) continue
+      const px = tx*T, py = ty*T
+      if (Math.hypot(px-taliaX, py-taliaY) < CLEAR) continue
+      const def = PROPS[propKeys[Math.floor(next()*propKeys.length)]]
+      if (placements.some(p => Math.hypot(px-p.x, py-p.y) < 24)) continue
+      placements.push({ x:px, y:py, def })
     }
 
     // Well east of Talia
-    placements.push({ x: taliaX + 4*T, y: taliaY - 2*T, def: PROPS.well })
+    placements.push({ x: taliaX + 5*T, y: taliaY - T, def: PROPS.well })
 
     for (const { x, y, def } of placements) {
-      const t = new Texture({ source: propsTex.source, frame: new Rectangle(def.sx, def.sy, def.sw, def.sh) })
-      const s = new Sprite(t)
+      const tex = this.getPropsTexture(def)
+      if (!tex) continue
+      const s = new Sprite(tex)
       s.anchor.set(0.5, 1)
       s.x = x; s.y = y
       this.worldContainer.addChild(s)
-      this.collidables.push({ x: x + def.colX, y: y + def.colY, w: def.colW, h: def.colH })
-    }
-
-    // Water and cliffs are also collidable
-    for (const { x, y } of mapData.water) {
-      this.collidables.push({ x: x*T, y: y*T, w: T, h: T })
-    }
-    for (const { x, y } of mapData.cliff) {
-      this.collidables.push({ x: x*T, y: y*T, w: T, h: T })
+      this.collidables.push({ x: x+def.colX, y: y+def.colY, w: def.colW, h: def.colH })
     }
   }
 
   // ── Characters ────────────────────────────────────────────────────────────
 
   private spawnCharacters() {
-    const taliaX = Math.round(W * 0.62) * T
-    const taliaY = Math.round(H * 0.28) * T
+    const PATH_CX = Math.round(W * 0.62)
+    const TALIA_ROW = Math.round(H * 0.28)
+    const tx = PATH_CX * T
+    const ty = TALIA_ROW * T
 
-    this.talia = new TaliaCharacter(taliaX, taliaY)
+    this.talia = new TaliaCharacter(tx, ty)
     this.worldContainer.addChild(this.talia.sprite)
 
-    // Player spawns on the path below Talia
-    this.player = new Player(taliaX, taliaY + 6 * T)
+    this.player = new Player(tx, ty + 7*T)
     this.worldContainer.addChild(this.player.sprite)
   }
 
-  // ── Fallback (no assets) ──────────────────────────────────────────────────
+  // ── Fallback ──────────────────────────────────────────────────────────────
 
   private buildFallback() {
     const g = new Graphics()
     g.rect(0, 0, W*T, H*T); g.fill(0x4a7c59)
     this.worldContainer.addChild(g)
+    this.spawnCharacters()
   }
 
   // ── Input ─────────────────────────────────────────────────────────────────
@@ -384,8 +410,7 @@ export class WorldScene {
   private checkCollision(nx: number, ny: number): boolean {
     const hw = 6, hh = 6
     return this.collidables.some(c =>
-      nx - hw < c.x + c.w && nx + hw > c.x &&
-      ny - hh < c.y + c.h && ny + hh > c.y
+      nx-hw < c.x+c.w && nx+hw > c.x && ny-hh < c.y+c.h && ny+hh > c.y
     )
   }
 
@@ -395,27 +420,27 @@ export class WorldScene {
     if (this.dialogue?.isOpen) return
     if (!this.player || !this.talia) return
 
-    // Water animation — gentle vertical shimmer
-    this.animTick += delta * 0.04
-    for (const { sprite, baseY } of this.waterTiles) {
-      sprite.y = baseY + Math.sin(this.animTick + sprite.x * 0.02) * 0.4
+    // Water shimmer animation
+    this.animTick += delta * 0.03
+    for (const w of this.waterSprites) {
+      w.sprite.y = w.baseY + Math.sin(this.animTick + w.baseX * 0.015) * 0.35
     }
 
     const speed = 1.5
     let dx = 0, dy = 0
-    if (this.keys['KeyW'] || this.keys['ArrowUp'])    dy -= speed
-    if (this.keys['KeyS'] || this.keys['ArrowDown'])  dy += speed
-    if (this.keys['KeyA'] || this.keys['ArrowLeft'])  dx -= speed
-    if (this.keys['KeyD'] || this.keys['ArrowRight']) dx += speed
+    if (this.keys['KeyW']||this.keys['ArrowUp'])    dy -= speed
+    if (this.keys['KeyS']||this.keys['ArrowDown'])  dy += speed
+    if (this.keys['KeyA']||this.keys['ArrowLeft'])  dx -= speed
+    if (this.keys['KeyD']||this.keys['ArrowRight']) dx += speed
 
-    const minB = T * 2, maxX = (W - 2) * T, maxY = (H - 2) * T
-    const nx = Math.max(minB, Math.min(maxX, this.player.sprite.x + dx * delta))
-    const ny = Math.max(minB, Math.min(maxY, this.player.sprite.y + dy * delta))
+    const minB = T*2, maxX = (W-2)*T, maxY = (H-2)*T
+    const nx = Math.max(minB, Math.min(maxX, this.player.sprite.x + dx*delta))
+    const ny = Math.max(minB, Math.min(maxY, this.player.sprite.y + dy*delta))
 
     const canX = !this.checkCollision(nx, this.player.sprite.y)
     const canY = !this.checkCollision(this.player.sprite.x, ny)
-    this.player.move(canX ? dx * delta : 0, canY ? dy * delta : 0, minB, minB, maxX, maxY)
-    this.player.update(delta, canX ? dx : 0, canY ? dy : 0)
+    this.player.move(canX?dx*delta:0, canY?dy*delta:0, minB, minB, maxX, maxY)
+    this.player.update(delta, canX?dx:0, canY?dy:0)
 
     const dist = Math.hypot(this.player.sprite.x - this.talia.sprite.x, this.player.sprite.y - this.talia.sprite.y)
     if (dist < 32 && this.dialogue.canOpen()) this.dialogue.open()
@@ -426,10 +451,10 @@ export class WorldScene {
 
   private updateCamera() {
     const sw = this.app.screen.width, sh = this.app.screen.height
-    let cx = this.player.sprite.x - sw / 2
-    let cy = this.player.sprite.y - sh / 2
-    cx = Math.max(0, Math.min(W * T - sw, cx))
-    cy = Math.max(0, Math.min(H * T - sh, cy))
+    let cx = this.player.sprite.x - sw/2
+    let cy = this.player.sprite.y - sh/2
+    cx = Math.max(0, Math.min(W*T-sw, cx))
+    cy = Math.max(0, Math.min(H*T-sh, cy))
     this.worldContainer.x = -cx
     this.worldContainer.y = -cy
   }
