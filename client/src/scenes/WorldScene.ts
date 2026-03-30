@@ -65,6 +65,8 @@ export class WorldScene {
       this.buildFallbackGrass()
     }
 
+    this.addGroundDetails()
+
     if (propsTex) {
       this.scatterProps(propsTex)
     } else {
@@ -108,18 +110,90 @@ export class WorldScene {
     bg.fill(0x4a7c59)
     this.worldContainer.addChild(bg)
 
-    // Variation patches
     const patches = new Graphics()
     const rand = (x: number, y: number) => ((x * 1619 + y * 31337) & 0xffff) / 0xffff
     for (let ty = 0; ty < WORLD_H; ty++) {
       for (let tx = 0; tx < WORLD_W; tx++) {
-        if (rand(tx, ty) > 0.8) {
+        const r = rand(tx, ty)
+        if (r > 0.8) {
           patches.rect(tx * TILE, ty * TILE, TILE, TILE)
-          patches.fill(0x3d6b4a)
+          patches.fill(r > 0.93 ? 0x3a5c40 : 0x3d6b4a)
         }
       }
     }
     this.worldContainer.addChild(patches)
+    this.addFallbackDetails()
+  }
+
+  private addFallbackDetails() {
+    const details = new Graphics()
+    const cx = (WORLD_W * TILE) / 2
+    const cy = (WORLD_H * TILE) / 2
+
+    // Dirt path from south edge to Talia
+    for (let y = cy + 32; y < WORLD_H * TILE - TILE * 3; y += TILE) {
+      details.rect(cx - 12, y, 24, TILE); details.fill(0x8b6914)
+    }
+
+    // Small pond northwest of center
+    details.ellipse(cx - 120, cy - 80, 40, 28); details.fill(0x3a7abf)
+    details.ellipse(cx - 120, cy - 80, 36, 24); details.fill(0x4a8fd4)
+
+    // Flower clusters
+    const flowers = [
+      [cx + 60, cy + 40], [cx - 50, cy + 70], [cx + 80, cy - 30],
+      [cx + 30, cy - 60], [cx - 80, cy + 20]
+    ]
+    for (const [fx, fy] of flowers) {
+      details.circle(fx, fy, 3);         details.fill(0xffdd44)
+      details.circle(fx + 8, fy + 4, 3); details.fill(0xff88aa)
+      details.circle(fx - 6, fy + 6, 3); details.fill(0xffffff)
+    }
+
+    this.worldContainer.addChild(details)
+  }
+
+  // --- Ground details (path, pond, flowers) ---
+
+  private addGroundDetails() {
+    const details = new Graphics()
+    const cx = (WORLD_W * TILE) / 2
+    const cy = (WORLD_H * TILE) / 2
+
+    // Dirt path leading from south edge up to Talia
+    for (let y = cy + 30; y < WORLD_H * TILE - TILE * 4; y += 2) {
+      details.rect(cx - 10, y, 20, 3)
+      details.fill({ color: 0x9b7d3a, alpha: 0.55 })
+    }
+
+    // Small pond northwest
+    details.ellipse(cx - 130, cy - 90, 44, 30)
+    details.fill(0x3a7abf)
+    details.ellipse(cx - 130, cy - 90, 40, 26)
+    details.fill(0x5a9fd4)
+
+    // Flower clusters scattered around
+    const flowerSpots = [
+      [cx + 64, cy + 44, 0xffdd44],
+      [cx - 50, cy + 72, 0xff88aa],
+      [cx + 90, cy - 32, 0xffffff],
+      [cx - 90, cy + 28, 0xffcc00],
+      [cx + 40, cy - 68, 0xff88aa],
+      [cx - 60, cy - 50, 0xaaddff],
+    ]
+    for (const [fx, fy, color] of flowerSpots) {
+      for (let i = 0; i < 5; i++) {
+        const ox = ((i * 137) % 20) - 10
+        const oy = ((i * 97) % 16) - 8
+        details.circle(fx + ox, fy + oy, 2.5)
+        details.fill(color as number)
+        // Stem
+        details.rect(fx + ox - 0.5, fy + oy + 2, 1, 4)
+        details.fill(0x4a7c40)
+      }
+    }
+
+    this.worldContainer.addChild(details)
   }
 
   // --- Props ---

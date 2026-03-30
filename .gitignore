@@ -4,3 +4,5 @@ dist/
 server/public/
 *.log
 .DS_Store
+# Large generated sprites — download separately
+client/public/assets/sprites/talia-sprite-sheet.png
