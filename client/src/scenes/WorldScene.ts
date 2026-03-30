@@ -4,27 +4,15 @@ import { TaliaCharacter } from '../entities/TaliaCharacter'
 import { DialogueManager } from '../ui/DialogueManager'
 import mapData from './mapData.json'
 
-const T = mapData.tileDim         // 16px
-const MAP_W = mapData.width       // 64
-const MAP_H = mapData.height      // 48
-const TS_COLS = Math.floor(mapData.tileSetDimX / T)  // 30
+const T = mapData.tileDim   // 16px
+const W = mapData.width     // 48
+const H = mapData.height    // 40
 
-// Talia position: top of path (~50% x, 18% y)
-const TALIA_TX = Math.round(MAP_W * 0.50)
-const TALIA_TY = Math.round(MAP_H * 0.18)
+// Tilesheet column counts (needed to convert flat tile ID → col,row)
+const TS1_COLS  = Math.floor((mapData as any).tileSetDimX  / T)   // 30
+const TS10_COLS = Math.floor((mapData as any).tileSet10DimX / T)  // 14
 
-// Props from 3.png (verified clean)
-interface PropDef { sx:number; sy:number; sw:number; sh:number; colX:number; colY:number; colW:number; colH:number }
-const PROPS: Record<string, PropDef> = {
-  tree:    { sx:0,   sy:0,  sw:64, sh:64, colX:-14, colY:-8,  colW:28, colH:16 },
-  treeMed: { sx:144, sy:0,  sw:48, sh:64, colX:-10, colY:-6,  colW:20, colH:14 },
-  treeAlt: { sx:192, sy:0,  sw:48, sh:64, colX:-10, colY:-6,  colW:20, colH:14 },
-  rockSm:  { sx:64,  sy:96, sw:32, sh:32, colX:-8,  colY:-8,  colW:16, colH:14 },
-  boulder: { sx:352, sy:0,  sw:64, sh:64, colX:-16, colY:-14, colW:32, colH:22 },
-  well:    { sx:0,   sy:64, sw:48, sh:64, colX:-12, colY:-12, colW:24, colH:20 },
-}
-
-interface Collidable { x:number; y:number; w:number; h:number }
+interface Collidable { x: number; y: number; w: number; h: number }
 
 export class WorldScene {
   container: Container
@@ -33,11 +21,10 @@ export class WorldScene {
   private talia!: TaliaCharacter
   private dialogue: DialogueManager
   private worldContainer: Container
-  private keys: Record<string,boolean> = {}
+  private keys: Record<string, boolean> = {}
   private collidables: Collidable[] = []
-  private waterSprites: Array<{sprite:Sprite; baseY:number}> = []
   private animTick = 0
-  private texCache = new Map<string,Texture>()
+  private texCache = new Map<string, Texture>()
 
   constructor(app: Application, dialogue: DialogueManager) {
     this.app = app
@@ -50,152 +37,80 @@ export class WorldScene {
   }
 
   private async loadAndBuild() {
-    let tsTex: Texture | null = null
-    let ts7Tex: Texture | null = null
-    let propsTex: Texture | null = null
-
     const md = mapData as any
+    let ts1Tex: Texture | null = null
+    let ts10Tex: Texture | null = null
 
     try {
-      const toLoad: Array<{alias: string; src: string}> = [
-        { alias: 'tileset1', src: md.tileSetUrl },
-        { alias: 'props3',   src: '/assets/tilesets/3.png' },
-      ]
-      if (md.tileSet7Url) toLoad.push({ alias: 'tileset7', src: md.tileSet7Url })
-
+      const toLoad = [{ alias: 'ts1', src: md.tileSetUrl }]
+      if (md.tileSet10Url) toLoad.push({ alias: 'ts10', src: md.tileSet10Url })
       await Assets.load(toLoad)
-      tsTex    = Assets.get('tileset1')
-      ts7Tex   = md.tileSet7Url ? Assets.get('tileset7') : null
-      propsTex = Assets.get('props3')
-    } catch(e) {
+      ts1Tex  = Assets.get('ts1')
+      ts10Tex = md.tileSet10Url ? Assets.get('ts10') : null
+    } catch (e) {
       console.warn('[world] Asset load failed:', e)
     }
 
-    if (tsTex) {
-      // Layer 0: base terrain (1.png)
-      this.renderTileLayer(tsTex, md.bgTiles, 30)
-
-      // Layer 1: overlay tiles if present (e.g. cliff overlay from second sheet)
-      if (md.overlayTiles) {
-        const overlayTex = ts7Tex || tsTex
-        this.renderTileLayer(overlayTex, md.overlayTiles, 35)
-      }
-    } else {
+    if (!ts1Tex) {
       const g = new Graphics()
-      g.rect(0, 0, MAP_W*T, MAP_H*T); g.fill(0x4a7c59)
+      g.rect(0, 0, W*T, H*T); g.fill(0x4a7c59)
       this.worldContainer.addChild(g)
+    } else {
+      // Layer 0: base terrain from 1.png
+      this.renderLayer(ts1Tex, md.bgTiles, TS1_COLS)
+
+      // Layer 1: path overlay from 10.png (skip -1 tiles)
+      if (ts10Tex && md.overlayTiles) {
+        this.renderLayer(ts10Tex, md.overlayTiles, TS10_COLS)
+      }
     }
 
-    this.buildCollisionSet()
-    if (propsTex) this.buildProps(propsTex)
     this.spawnCharacters()
   }
 
-  // ── ai-town style tile layer renderer ────────────────────────────────────
-  // bgTiles[tx][ty] = flat tile index into the tileset
+  // ── Tile layer renderer ───────────────────────────────────────────────────
+  // tiles[tx][ty] = flat tile ID (row*sheetCols + col), or -1 to skip
 
-  private renderTileLayer(tsTex: Texture, bgTiles: number[][], sheetCols = TS_COLS) {
-    // Pre-build all unique tile textures
-    const texCache = new Map<number, Texture>()
-    const getTileTex = (tileId: number): Texture => {
-      if (texCache.has(tileId)) return texCache.get(tileId)!
-      const col = tileId % sheetCols
-      const row = Math.floor(tileId / sheetCols)
+  private renderLayer(tsTex: Texture, tiles: number[][], sheetCols: number) {
+    const cache = new Map<number, Texture>()
+
+    const getTex = (id: number): Texture => {
+      if (cache.has(id)) return cache.get(id)!
+      const col = id % sheetCols
+      const row = Math.floor(id / sheetCols)
       const tex = new Texture({
         source: tsTex.source,
         frame: new Rectangle(col * T, row * T, T, T),
       })
-      texCache.set(tileId, tex)
+      cache.set(id, tex)
       return tex
     }
 
-    const WATER_MIN = 250  // tile IDs in the blue water range
-
-    for (let tx = 0; tx < MAP_W; tx++) {
-      for (let ty = 0; ty < MAP_H; ty++) {
-        const tileId = bgTiles[tx]?.[ty] ?? -1
-        if (tileId === -1) continue
-
-        const tex = getTileTex(tileId)
-        const s = new Sprite(tex)
+    for (let tx = 0; tx < W; tx++) {
+      for (let ty = 0; ty < H; ty++) {
+        const id = tiles[tx]?.[ty] ?? -1
+        if (id === -1) continue
+        const s = new Sprite(getTex(id))
         s.x = tx * T
         s.y = ty * T
         this.worldContainer.addChild(s)
-
-        // Track water tiles for animation
-        if (tileId >= 230 && tileId <= 310) {
-          this.waterSprites.push({ sprite: s, baseY: ty * T })
-        }
       }
-    }
-  }
-
-  // ── Collision ─────────────────────────────────────────────────────────────
-
-  private buildCollisionSet() {
-    const bgTiles = mapData.bgTiles
-    // Water tiles = flat index range 230-310 (blue tiles in 1.png rows 7-10)
-    // Cliff tiles = 1119 (row 37)
-    for (let tx = 0; tx < MAP_W; tx++) {
-      for (let ty = 0; ty < MAP_H; ty++) {
-        const id = bgTiles[tx]?.[ty] ?? -1
-        if ((id >= 230 && id <= 320) || id === 1119) {
-          this.collidables.push({ x: tx*T, y: ty*T, w: T, h: T })
-        }
-      }
-    }
-  }
-
-  // ── Props ─────────────────────────────────────────────────────────────────
-
-  private buildProps(propsTex: Texture) {
-    const taliaX = TALIA_TX * T
-    const taliaY = TALIA_TY * T
-    const CLEAR = 5 * T
-
-    const isCollidable = (tx: number, ty: number) =>
-      this.collidables.some(c => tx*T >= c.x && tx*T < c.x+c.w && ty*T >= c.y && ty*T < c.y+c.h)
-
-    let seed = 7331
-    const next = () => { seed = (seed*1664525+1013904223)&0x7fffffff; return seed/0x7fffffff }
-    const propKeys = ['tree','treeMed','treeAlt','rockSm','boulder']
-    const placements: Array<{x:number; y:number; def:PropDef}> = []
-
-    for (let i = 0; i < 80; i++) {
-      const tx = 2 + Math.floor(next() * (MAP_W-4))
-      const ty = 2 + Math.floor(next() * (MAP_H-4))
-      if (isCollidable(tx, ty)) continue
-      const px = tx*T, py = ty*T
-      if (Math.hypot(px-taliaX, py-taliaY) < CLEAR) continue
-      const def = PROPS[propKeys[Math.floor(next()*propKeys.length)]]
-      if (placements.some(p => Math.hypot(px-p.x, py-p.y) < 24)) continue
-      placements.push({ x:px, y:py, def })
-    }
-
-    // Well near Talia
-    placements.push({ x: taliaX + 5*T, y: taliaY - T, def: PROPS.well })
-
-    for (const { x, y, def } of placements) {
-      const tex = new Texture({
-        source: propsTex.source,
-        frame: new Rectangle(def.sx, def.sy, def.sw, def.sh),
-      })
-      const s = new Sprite(tex)
-      s.anchor.set(0.5, 1)
-      s.x = x; s.y = y
-      this.worldContainer.addChild(s)
-      this.collidables.push({ x: x+def.colX, y: y+def.colY, w: def.colW, h: def.colH })
     }
   }
 
   // ── Characters ────────────────────────────────────────────────────────────
 
   private spawnCharacters() {
-    const tx = TALIA_TX * T
-    const ty = TALIA_TY * T
-    this.talia = new TaliaCharacter(tx, ty)
+    const md = mapData as any
+    const tx = md.talia?.tx ?? Math.round(W / 2)
+    const ty = md.talia?.ty ?? Math.round(H / 3)
+    const spawnTx = md.playerSpawn?.tx ?? tx
+    const spawnTy = md.playerSpawn?.ty ?? ty + 8
+
+    this.talia = new TaliaCharacter(tx * T, ty * T)
     this.worldContainer.addChild(this.talia.sprite)
-    this.player = new Player(tx, ty + 6*T)
+
+    this.player = new Player(spawnTx * T, spawnTy * T)
     this.worldContainer.addChild(this.player.sprite)
   }
 
@@ -213,7 +128,8 @@ export class WorldScene {
   private checkCollision(nx: number, ny: number): boolean {
     const hw = 6, hh = 6
     return this.collidables.some(c =>
-      nx-hw < c.x+c.w && nx+hw > c.x && ny-hh < c.y+c.h && ny+hh > c.y
+      nx - hw < c.x + c.w && nx + hw > c.x &&
+      ny - hh < c.y + c.h && ny + hh > c.y
     )
   }
 
@@ -223,28 +139,26 @@ export class WorldScene {
     if (this.dialogue?.isOpen) return
     if (!this.player || !this.talia) return
 
-    this.animTick += delta * 0.03
-    for (const w of this.waterSprites) {
-      w.sprite.y = w.baseY + Math.sin(this.animTick + w.sprite.x * 0.015) * 0.35
-    }
-
     const speed = 1.5
     let dx = 0, dy = 0
-    if (this.keys['KeyW']||this.keys['ArrowUp'])    dy -= speed
-    if (this.keys['KeyS']||this.keys['ArrowDown'])  dy += speed
-    if (this.keys['KeyA']||this.keys['ArrowLeft'])  dx -= speed
-    if (this.keys['KeyD']||this.keys['ArrowRight']) dx += speed
+    if (this.keys['KeyW'] || this.keys['ArrowUp'])    dy -= speed
+    if (this.keys['KeyS'] || this.keys['ArrowDown'])  dy += speed
+    if (this.keys['KeyA'] || this.keys['ArrowLeft'])  dx -= speed
+    if (this.keys['KeyD'] || this.keys['ArrowRight']) dx += speed
 
-    const minB = T*2, maxX = (MAP_W-2)*T, maxY = (MAP_H-2)*T
-    const nx = Math.max(minB, Math.min(maxX, this.player.sprite.x + dx*delta))
-    const ny = Math.max(minB, Math.min(maxY, this.player.sprite.y + dy*delta))
+    const minB = T * 2, maxX = (W - 2) * T, maxY = (H - 2) * T
+    const nx = Math.max(minB, Math.min(maxX, this.player.sprite.x + dx * delta))
+    const ny = Math.max(minB, Math.min(maxY, this.player.sprite.y + dy * delta))
 
     const canX = !this.checkCollision(nx, this.player.sprite.y)
     const canY = !this.checkCollision(this.player.sprite.x, ny)
-    this.player.move(canX?dx*delta:0, canY?dy*delta:0, minB, minB, maxX, maxY)
-    this.player.update(delta, canX?dx:0, canY?dy:0)
+    this.player.move(canX ? dx * delta : 0, canY ? dy * delta : 0, minB, minB, maxX, maxY)
+    this.player.update(delta, canX ? dx : 0, canY ? dy : 0)
 
-    const dist = Math.hypot(this.player.sprite.x - this.talia.sprite.x, this.player.sprite.y - this.talia.sprite.y)
+    const dist = Math.hypot(
+      this.player.sprite.x - this.talia.sprite.x,
+      this.player.sprite.y - this.talia.sprite.y
+    )
     if (dist < 32 && this.dialogue.canOpen()) this.dialogue.open()
 
     this.talia.update(delta)
@@ -253,10 +167,10 @@ export class WorldScene {
 
   private updateCamera() {
     const sw = this.app.screen.width, sh = this.app.screen.height
-    let cx = this.player.sprite.x - sw/2
-    let cy = this.player.sprite.y - sh/2
-    cx = Math.max(0, Math.min(MAP_W*T-sw, cx))
-    cy = Math.max(0, Math.min(MAP_H*T-sh, cy))
+    let cx = this.player.sprite.x - sw / 2
+    let cy = this.player.sprite.y - sh / 2
+    cx = Math.max(0, Math.min(W * T - sw, cx))
+    cy = Math.max(0, Math.min(H * T - sh, cy))
     this.worldContainer.x = -cx
     this.worldContainer.y = -cy
   }
