@@ -1,25 +1,33 @@
-import { Container, Graphics, Text, TextStyle } from 'pixi.js'
+import { AnimatedSprite, Assets, Container, Graphics, Rectangle, Text, TextStyle, Texture } from 'pixi.js'
+
+// Talia sprite sheet: 1584x672, 8 cols x 4 rows, each frame 198x168
+// Rows: 0=down, 1=left, 2=right, 3=up
+const FRAME_W = 198
+const FRAME_H = 168
+const FRAME_COUNT = 8
+const ROW_DIR = { down: 0, left: 1, right: 2, up: 3 }
+
+// Display scale — 198px frames are huge, scale down to ~48px effective height
+const DISPLAY_SCALE = 0.25
 
 export class TaliaCharacter {
   sprite: Container
-  private body: Graphics
+  private animated: AnimatedSprite | null = null
+  private fallback: Graphics | null = null
   private nameTag: Text
   private idleTimer = 0
+  private ring: Graphics
 
   constructor(x: number, y: number) {
     this.sprite = new Container()
     this.sprite.x = x
     this.sprite.y = y
 
-    // Proximity ring
-    const ring = new Graphics()
-    ring.circle(0, 0, 28)
-    ring.stroke({ color: 0x7b68ee, width: 1.5, alpha: 0.25 })
-    this.sprite.addChild(ring)
-
-    this.body = new Graphics()
-    this.sprite.addChild(this.body)
-    this.drawBody(0)
+    // Proximity ring — always visible
+    this.ring = new Graphics()
+    this.ring.circle(0, 0, 28)
+    this.ring.stroke({ color: 0x7b68ee, width: 1.5, alpha: 0.3 })
+    this.sprite.addChild(this.ring)
 
     // Name tag
     const style = new TextStyle({
@@ -31,74 +39,69 @@ export class TaliaCharacter {
     })
     this.nameTag = new Text({ text: 'Talia', style })
     this.nameTag.anchor.set(0.5, 1)
-    this.nameTag.y = -46
+    this.nameTag.y = -52
     this.sprite.addChild(this.nameTag)
+
+    this.buildFallback()
+    this.loadSprite()
   }
 
-  private drawBody(bob: number) {
-    const g = this.body
-    g.clear()
-    const s = 2.2   // scale factor — draw at 2.2x so she matches the player size
-    const y = bob * s
+  private buildFallback() {
+    const g = new Graphics()
+    const s = 2.2
+    // Simplified version while loading
+    g.ellipse(0, -14*s, 9*s, 10*s); g.fill(0xf5c5a3)
+    g.ellipse(0, -21*s, 9*s, 5*s);  g.fill(0xf5c842)
+    g.rect(-7*s, -2*s, 14*s, 12*s); g.fill(0x1a1a4e)
+    g.circle(-1*s, 4*s, 3*s);       g.fill(0xf5c842)
+    g.circle(1*s, 4*s, 2.5*s);      g.fill(0x1a1a4e)
+    this.fallback = g
+    this.sprite.addChild(g)
+  }
 
-    // Legs
-    g.rect(-4*s, 8*s + y, 4*s, 7*s);  g.fill(0x2a2a6a)
-    g.rect(1*s,  8*s + y, 4*s, 7*s);  g.fill(0x2a2a6a)
-    // Feet
-    g.rect(-5*s, 14*s + y, 5*s, 3*s); g.fill(0x1a1a30)
-    g.rect(1*s,  14*s + y, 5*s, 3*s); g.fill(0x1a1a30)
+  private async loadSprite() {
+    try {
+      const tex = await Assets.load({
+        alias: 'talia-sheet',
+        src: '/assets/sprites/talia-sprite-sheet.png'
+      })
 
-    // Hoodie body (navy)
-    g.rect(-7*s, -2*s + y, 14*s, 12*s); g.fill(0x1a1a4e)
+      // Build idle frames from row 0 (facing down)
+      const idleFrames = this.buildRowFrames(tex, ROW_DIR.down)
 
-    // Hood shadow
-    g.rect(-6*s, -3*s + y, 12*s, 3*s);  g.fill(0x131340)
+      this.animated = new AnimatedSprite(idleFrames)
+      this.animated.animationSpeed = 0.08  // gentle idle cycle
+      this.animated.anchor.set(0.5, 0.85)
+      this.animated.scale.set(DISPLAY_SCALE)
+      this.animated.play()
 
-    // Crescent moon emblem
-    g.circle(-1*s, 4*s + y, 3*s);      g.fill(0xf5c842)
-    g.circle(1*s,  4*s + y, 2.5*s);    g.fill(0x1a1a4e)
+      if (this.fallback) {
+        this.sprite.removeChild(this.fallback)
+        this.fallback = null
+      }
+      this.sprite.addChild(this.animated)
+    } catch (e) {
+      console.warn('[talia] Sprite sheet not found, using fallback', e)
+    }
+  }
 
-    // Sleeves
-    g.rect(-11*s, -1*s + y, 5*s, 8*s); g.fill(0x15154a)
-    g.rect(7*s,   -1*s + y, 5*s, 8*s); g.fill(0x15154a)
-    // Hands
-    g.circle(-8.5*s, 7*s + y, 2.5*s);  g.fill(0xf5c5a3)
-    g.circle(9.5*s,  7*s + y, 2.5*s);  g.fill(0xf5c5a3)
-
-    // Neck
-    g.rect(-2*s, -6*s + y, 4*s, 5*s);  g.fill(0xf5c5a3)
-
-    // Head
-    g.ellipse(0, -14*s + y, 9*s, 10*s); g.fill(0xf5c5a3)
-
-    // Hair — golden blonde, wavy sides
-    g.ellipse(0,    -21*s + y, 9*s, 5*s);   g.fill(0xf5c842)  // top
-    g.rect(-9*s, -22*s + y, 4*s, 12*s);     g.fill(0xf5c842)  // left
-    g.rect(5*s,  -22*s + y, 4*s, 12*s);     g.fill(0xf5c842)  // right
-    g.ellipse(-7*s, -14*s + y, 3*s, 5*s);   g.fill(0xe8b030)  // left wave
-    g.ellipse(7*s,  -14*s + y, 3*s, 5*s);   g.fill(0xe8b030)  // right wave
-
-    // Eyes — sage green almond shape
-    g.ellipse(-3.5*s, -15*s + y, 2.5*s, 1.8*s); g.fill(0x7ba05b)
-    g.ellipse(3.5*s,  -15*s + y, 2.5*s, 1.8*s); g.fill(0x7ba05b)
-    // Pupils
-    g.circle(-3.5*s, -15*s + y, 1*s); g.fill(0x2a4a1e)
-    g.circle(3.5*s,  -15*s + y, 1*s); g.fill(0x2a4a1e)
-
-    // Freckles
-    g.circle(-4*s, -12*s + y, 1*s);  g.fill(0xc9956a)
-    g.circle(-2*s, -11.5*s + y, 0.8*s); g.fill(0xc9956a)
-    g.circle(4*s,  -12*s + y, 1*s);  g.fill(0xc9956a)
-    g.circle(2*s,  -11.5*s + y, 0.8*s); g.fill(0xc9956a)
-
-    // Smile
-    g.arc(0, -13*s + y, 2*s, 0.1, Math.PI - 0.1)
-    g.stroke({ color: 0x8a5c3a, width: 1 })
+  private buildRowFrames(tex: Texture, row: number): Texture[] {
+    return Array.from({ length: FRAME_COUNT }, (_, col) =>
+      new Texture({
+        source: tex.source,
+        frame: new Rectangle(col * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H),
+      })
+    )
   }
 
   update(delta: number) {
+    // Subtle name tag bob regardless of sprite type
     this.idleTimer += delta * 0.018
-    const bob = Math.sin(this.idleTimer) * 0.6
-    this.drawBody(bob)
+    this.nameTag.y = -52 + Math.sin(this.idleTimer) * 1.5
+
+    // Fallback still bobs
+    if (this.fallback) {
+      this.fallback.y = Math.sin(this.idleTimer) * 1.5
+    }
   }
 }

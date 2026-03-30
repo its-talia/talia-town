@@ -47,8 +47,8 @@ export class Player {
 
       this.animated = new AnimatedSprite(this.allFrames['down'])
       this.animated.animationSpeed = 0.12
-      this.animated.anchor.set(0.5, 1.0)
-      this.animated.scale.set(1.5)   // scale up from tiny 26px sprites
+      this.animated.anchor.set(0.5, 0.85)  // slightly above bottom to avoid float
+      this.animated.scale.set(1.5)
       this.animated.stop()
 
       // Remove fallback, add animated sprite
