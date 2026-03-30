@@ -14,11 +14,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const fastify = Fastify({ logger: true })
 
-// Serve built client assets
-fastify.register(FastifyStatic, {
-  root: join(__dirname, '../../server/public'),
-  prefix: '/',
-})
+// Serve built client assets (production only — in dev, Vite serves the client)
+import { existsSync } from 'fs'
+const publicDir = join(__dirname, '../../server/public')
+if (existsSync(publicDir)) {
+  fastify.register(FastifyStatic, {
+    root: publicDir,
+    prefix: '/',
+  })
+}
 
 // Session / cookie
 fastify.register(FastifyCookie)

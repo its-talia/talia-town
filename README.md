@@ -21,8 +21,8 @@ Walk around a grassy field. Find Talia standing in the center. Talk to her via t
 ## Getting Started
 
 ```bash
-# 1. Install dependencies
-npm install
+# 1. Install dependencies (--include=dev required for workspace devDeps)
+npm install --include=dev
 
 # 2. Copy env and configure
 cp .env.example .env
