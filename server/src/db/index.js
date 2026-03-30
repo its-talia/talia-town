@@ -1,47 +1,25 @@
 import pg from 'pg'
+import { migrate } from './migrate.js'
 
 const { Pool } = pg
 
 class Database {
   constructor() {
-    this.pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-    })
+    this.pool = process.env.DATABASE_URL
+      ? new Pool({ connectionString: process.env.DATABASE_URL })
+      : null
   }
 
   async init() {
-    if (!process.env.DATABASE_URL) {
-      console.warn('DATABASE_URL not set — skipping DB init')
+    if (!this.pool) {
+      console.warn('[db] No DATABASE_URL — database disabled')
       return
     }
-    try {
-      await this.pool.query(`
-        CREATE TABLE IF NOT EXISTS players (
-          id SERIAL PRIMARY KEY,
-          discord_id TEXT UNIQUE NOT NULL,
-          username TEXT NOT NULL,
-          avatar TEXT,
-          pos_x INTEGER DEFAULT 640,
-          pos_y DEFAULT 480,
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          last_seen TIMESTAMPTZ DEFAULT NOW()
-        );
-        
-        CREATE TABLE IF NOT EXISTS dialogue_history (
-          id SERIAL PRIMARY KEY,
-          discord_id TEXT NOT NULL,
-          message TEXT NOT NULL,
-          response TEXT NOT NULL,
-          created_at TIMESTAMPTZ DEFAULT NOW()
-        );
-      `)
-      console.log('Database initialized')
-    } catch (err) {
-      console.error('DB init error:', err.message)
-    }
+    await migrate(process.env.DATABASE_URL)
   }
 
   async upsertPlayer(discordId, username, avatar) {
+    if (!this.pool) return null
     const res = await this.pool.query(
       `INSERT INTO players (discord_id, username, avatar, last_seen)
        VALUES ($1, $2, $3, NOW())
@@ -53,11 +31,30 @@ class Database {
     return res.rows[0]
   }
 
+  async savePlayerPosition(discordId, x, y) {
+    if (!this.pool) return
+    await this.pool.query(
+      `UPDATE players SET pos_x = $2, pos_y = $3 WHERE discord_id = $1`,
+      [discordId, x, y]
+    )
+  }
+
   async logDialogue(discordId, message, response) {
+    if (!this.pool) return
     await this.pool.query(
       `INSERT INTO dialogue_history (discord_id, message, response) VALUES ($1, $2, $3)`,
       [discordId, message, response]
     )
+  }
+
+  async getDialogueHistory(discordId, limit = 20) {
+    if (!this.pool) return []
+    const res = await this.pool.query(
+      `SELECT message, response, created_at FROM dialogue_history
+       WHERE discord_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [discordId, limit]
+    )
+    return res.rows.reverse()
   }
 }
 
