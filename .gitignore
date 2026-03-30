@@ -5,3 +5,4 @@ server/public/
 *.log
 .DS_Store
 # (talia sprite sheet is included in the repo)
+server/data/*.db
