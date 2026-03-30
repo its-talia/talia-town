@@ -75,11 +75,16 @@ export class WorldScene {
   // --- Terrain ---
 
   private buildTiledGrass(tex: Texture) {
-    // Use a few grass tile variants from row 0 of 1.png
+    // Confirmed solid fill grass tiles from 1.png (verified pixel-by-pixel):
+    // (col, row) → pixel (col*16, row*16)
+    // (1,3)=16,48  (3,3)=48,48  (1,2)=16,32  (3,2)=48,32  (7,3)=112,48  (8,3)=128,48
     const variants = [
-      new Texture({ source: tex.source, frame: new Rectangle(0,  0, TILE, TILE) }),
-      new Texture({ source: tex.source, frame: new Rectangle(16, 0, TILE, TILE) }),
-      new Texture({ source: tex.source, frame: new Rectangle(32, 0, TILE, TILE) }),
+      new Texture({ source: tex.source, frame: new Rectangle(16,  48, TILE, TILE) }),
+      new Texture({ source: tex.source, frame: new Rectangle(48,  48, TILE, TILE) }),
+      new Texture({ source: tex.source, frame: new Rectangle(16,  32, TILE, TILE) }),
+      new Texture({ source: tex.source, frame: new Rectangle(48,  32, TILE, TILE) }),
+      new Texture({ source: tex.source, frame: new Rectangle(112, 48, TILE, TILE) }),
+      new Texture({ source: tex.source, frame: new Rectangle(128, 48, TILE, TILE) }),
     ]
 
     // Seed a simple deterministic noise for tile variety
@@ -123,13 +128,14 @@ export class WorldScene {
   // Visually identified props:
   //   Trees ~(0,0)-(31,63), bushes, rocks, well
   private scatterProps(tex: Texture) {
-    // Define named prop regions in 3.png
+    // Verified prop regions from 3.png (sampled pixel-by-pixel)
     const props = [
-      { name: 'tree-large',  x: 0,  y: 0,  w: 32, h: 48 },  // large tree
-      { name: 'tree-small',  x: 48, y: 0,  w: 16, h: 32 },
-      { name: 'bush',        x: 80, y: 16, w: 16, h: 16 },
-      { name: 'rock-large',  x: 160, y: 48, w: 32, h: 16 },
-      { name: 'rock-small',  x: 192, y: 48, w: 16, h: 16 },
+      { name: 'tree-large',   x: 0,   y: 0,  w: 48, h: 64 },
+      { name: 'tree-small',   x: 48,  y: 0,  w: 32, h: 48 },
+      { name: 'tree-medium',  x: 128, y: 0,  w: 32, h: 64 },
+      { name: 'rock-large',   x: 224, y: 0,  w: 32, h: 32 },
+      { name: 'rock-small',   x: 224, y: 32, w: 16, h: 16 },
+      { name: 'boulder',      x: 256, y: 0,  w: 48, h: 48 },
     ]
 
     const rand = (seed: number) => ((seed * 1619 + 31337) & 0xffff) / 0xffff
@@ -172,7 +178,7 @@ export class WorldScene {
   private addTreeBorder(tex: Texture) {
     const treeTex = new Texture({
       source: tex.source,
-      frame: new Rectangle(0, 0, 32, 48)
+      frame: new Rectangle(0, 0, 48, 64)  // verified large tree coords
     })
 
     const positions: Array<{x: number, y: number}> = []
