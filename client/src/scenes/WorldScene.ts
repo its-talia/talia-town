@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Sprite, Texture, TilingSprite } from 'pixi.js'
+import { Application, Container, Graphics } from 'pixi.js'
 import { Player } from '../entities/Player'
 import { TaliaCharacter } from '../entities/TaliaCharacter'
 import { DialogueManager } from '../ui/DialogueManager'
@@ -41,22 +41,11 @@ export class WorldScene {
   }
 
   private buildGrassWorld() {
-    // Base grass fill using tiling sprite
-    try {
-      const grassTex = Texture.from('tileset')
-      const grass = new TilingSprite({
-        texture: grassTex,
-        width: WORLD_W * TILE_SIZE,
-        height: WORLD_H * TILE_SIZE,
-      })
-      this.worldContainer.addChild(grass)
-    } catch {
-      // Fallback: solid green if tileset not loaded
-      const bg = new Graphics()
-      bg.rect(0, 0, WORLD_W * TILE_SIZE, WORLD_H * TILE_SIZE)
-      bg.fill(0x4a7c59)
-      this.worldContainer.addChild(bg)
-    }
+    // Base grass fill — always use Graphics fallback until real tileset is loaded
+    const bg = new Graphics()
+    bg.rect(0, 0, WORLD_W * TILE_SIZE, WORLD_H * TILE_SIZE)
+    bg.fill(0x4a7c59)
+    this.worldContainer.addChild(bg)
 
     // Scatter some darker grass patches for visual variety
     const patches = new Graphics()
