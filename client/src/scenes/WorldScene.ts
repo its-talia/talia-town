@@ -17,21 +17,21 @@ const GRASS_FRAMES = [
   new Rectangle(128,48, TILE, TILE),   // col8,row3
 ]
 
-// Props from 3.png with collision boxes (relative to sprite anchor)
+// Props from 3.png — verified pixel-sampled coordinates, all CLEAN
 interface PropDef {
   name: string
-  sx: number; sy: number; sw: number; sh: number   // source rect in 3.png
-  colX: number; colY: number; colW: number; colH: number  // collision box
+  sx: number; sy: number; sw: number; sh: number
+  colX: number; colY: number; colW: number; colH: number
   anchor: [number, number]
 }
 
 const PROP_DEFS: PropDef[] = [
-  { name: 'tree-large',   sx:   0, sy:  0, sw: 48, sh: 64, colX: -12, colY: -8,  colW: 24, colH: 16, anchor: [0.5, 1] },
-  { name: 'tree-medium',  sx:  48, sy:  0, sw: 32, sh: 64, colX:  -8, colY: -6,  colW: 16, colH: 12, anchor: [0.5, 1] },
-  { name: 'tree-alt',     sx: 128, sy:  0, sw: 48, sh: 64, colX: -12, colY: -8,  colW: 24, colH: 16, anchor: [0.5, 1] },
-  { name: 'rock-large',   sx: 288, sy:  0, sw: 32, sh: 32, colX: -12, colY: -12, colW: 24, colH: 20, anchor: [0.5, 1] },
-  { name: 'rock-small',   sx: 288, sy: 32, sw: 32, sh: 32, colX:  -8, colY:  -8, colW: 16, colH: 14, anchor: [0.5, 1] },
-  { name: 'boulder',      sx: 352, sy:  0, sw: 48, sh: 48, colX: -16, colY: -14, colW: 32, colH: 22, anchor: [0.5, 1] },
+  { name: 'tree-large',  sx:   0, sy:  0, sw: 64, sh: 64, colX: -14, colY: -8, colW: 28, colH: 16, anchor: [0.5, 1] },
+  { name: 'tree-medium', sx: 144, sy:  0, sw: 48, sh: 64, colX: -10, colY: -6, colW: 20, colH: 14, anchor: [0.5, 1] },
+  { name: 'tree-alt',    sx: 192, sy:  0, sw: 48, sh: 64, colX: -10, colY: -6, colW: 20, colH: 14, anchor: [0.5, 1] },
+  { name: 'rock-sm',     sx:  64, sy: 96, sw: 32, sh: 32, colX:  -8, colY: -8, colW: 16, colH: 14, anchor: [0.5, 1] },
+  { name: 'rock-sm2',    sx:  96, sy: 96, sw: 32, sh: 32, colX:  -8, colY: -8, colW: 16, colH: 14, anchor: [0.5, 1] },
+  { name: 'boulder',     sx: 352, sy:  0, sw: 64, sh: 64, colX: -16, colY:-14, colW: 32, colH: 22, anchor: [0.5, 1] },
 ]
 
 // Water tile from 1.png — row 0 area has water, found at col4-5 row 0
@@ -222,15 +222,19 @@ export class WorldScene {
       placements.push({ x, y, def })
     }
 
-    // Dense tree border
-    for (let tx = BORDER; tx < WORLD_W - BORDER; tx += 3) {
-      const def = PROP_DEFS[Math.floor(((tx * 37) % 3))]
-      placements.push({ x: tx * TILE, y: BORDER * TILE,               def: PROP_DEFS[0] })
-      placements.push({ x: tx * TILE, y: (WORLD_H - BORDER - 1) * TILE, def: PROP_DEFS[0] })
+    // Dense tree border — place trees INSIDE the world bounds (anchor is bottom-center)
+    // Tree is 64px tall, so place at y=5*TILE so top is at y=TILE (not clipped)
+    const treeDef = PROP_DEFS[0]  // verified large tree
+    const TREE_ROWS_TOP = 5    // trees anchored here have tops visible within world
+    const TREE_ROWS_BOT = WORLD_H - 2
+
+    for (let tx = BORDER + 1; tx < WORLD_W - BORDER - 1; tx += 3) {
+      placements.push({ x: tx * TILE, y: TREE_ROWS_TOP * TILE,  def: treeDef })
+      placements.push({ x: tx * TILE, y: TREE_ROWS_BOT * TILE,  def: treeDef })
     }
-    for (let ty = BORDER + 2; ty < WORLD_H - BORDER; ty += 3) {
-      placements.push({ x: BORDER * TILE,               y: ty * TILE, def: PROP_DEFS[0] })
-      placements.push({ x: (WORLD_W - BORDER - 1) * TILE, y: ty * TILE, def: PROP_DEFS[0] })
+    for (let ty = TREE_ROWS_TOP + 3; ty < TREE_ROWS_BOT - 2; ty += 3) {
+      placements.push({ x: (BORDER + 1) * TILE,           y: ty * TILE, def: treeDef })
+      placements.push({ x: (WORLD_W - BORDER - 2) * TILE, y: ty * TILE, def: treeDef })
     }
 
     for (const { x, y, def } of placements) {
@@ -257,6 +261,7 @@ export class WorldScene {
     const cx = (WORLD_W * TILE) / 2
     const cy = (WORLD_H * TILE) / 2
     const wx = cx + 80, wy = cy - 40
+    // Well: col0-2 row4-7 = (0, 4*16, 3*16, 4*16) = (0, 64, 48, 64) — verified clean
     const wellTex = new Texture({ source: tex.source, frame: new Rectangle(0, 64, 48, 64) })
     const well = new Sprite(wellTex)
     well.anchor.set(0.5, 1)

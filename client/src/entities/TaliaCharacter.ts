@@ -1,19 +1,20 @@
 import { AnimatedSprite, Assets, Container, Graphics, Rectangle, Text, TextStyle, Texture } from 'pixi.js'
 
-// Talia sprite sheet: 1584x672, 8 cols x 4 rows, each frame 198x168
-// Rows: 0=down, 1=left, 2=right, 3=up
-const FRAME_W = 198
-const FRAME_H = 168
-const FRAME_COUNT = 8
-const ROW_DIR = { down: 0, left: 1, right: 2, up: 3 }
+// Talia sprite sheet: 1584x672
+// 8 cols x 3 rows (front, side, back)
+// Col width: 198px. Row y ranges: row0=12-222, row1=242-454, row2=469-671
+// We use row 0 (front/down) for idle
+const COLS = 8
+const COL_W = 198
+const ROW_FRONT = { y: 12, h: 211 }
 
-// Display scale — 198px frames are huge, scale down to ~48px effective height
-const DISPLAY_SCALE = 0.25
+// Display scale: frame is ~134px wide of actual character content
+// Scale down so she looks right in the 16px-tile world (~48px tall)
+const DISPLAY_SCALE = 0.22
 
 export class TaliaCharacter {
   sprite: Container
   private animated: AnimatedSprite | null = null
-  private fallback: Graphics | null = null
   private nameTag: Text
   private idleTimer = 0
   private ring: Graphics
@@ -23,13 +24,11 @@ export class TaliaCharacter {
     this.sprite.x = x
     this.sprite.y = y
 
-    // Proximity ring — always visible
     this.ring = new Graphics()
     this.ring.circle(0, 0, 28)
     this.ring.stroke({ color: 0x7b68ee, width: 1.5, alpha: 0.3 })
     this.sprite.addChild(this.ring)
 
-    // Name tag
     const style = new TextStyle({
       fontFamily: 'Courier New',
       fontSize: 10,
@@ -39,70 +38,53 @@ export class TaliaCharacter {
     })
     this.nameTag = new Text({ text: 'Talia', style })
     this.nameTag.anchor.set(0.5, 1)
-    this.nameTag.y = -52
+    this.nameTag.y = -50
     this.sprite.addChild(this.nameTag)
 
-    this.buildFallback()
     this.loadSprite()
-  }
-
-  private buildFallback() {
-    const g = new Graphics()
-    const s = 2.2
-    // Simplified version while loading
-    g.ellipse(0, -14*s, 9*s, 10*s); g.fill(0xf5c5a3)
-    g.ellipse(0, -21*s, 9*s, 5*s);  g.fill(0xf5c842)
-    g.rect(-7*s, -2*s, 14*s, 12*s); g.fill(0x1a1a4e)
-    g.circle(-1*s, 4*s, 3*s);       g.fill(0xf5c842)
-    g.circle(1*s, 4*s, 2.5*s);      g.fill(0x1a1a4e)
-    this.fallback = g
-    this.sprite.addChild(g)
   }
 
   private async loadSprite() {
     try {
-      const tex = await Assets.load({
-        alias: 'talia-sheet',
-        src: '/assets/sprites/talia-sprite-sheet.png'
-      })
+      const tex = await Assets.load({ alias: 'talia-sheet', src: '/assets/sprites/talia-sprite-sheet.png' })
 
-      // Build idle frames from row 0 (facing down)
-      const idleFrames = this.buildRowFrames(tex, ROW_DIR.down)
+      // Extract 8 frames from row 0 (front-facing)
+      const frames: Texture[] = []
+      for (let col = 0; col < COLS; col++) {
+        frames.push(new Texture({
+          source: tex.source,
+          frame: new Rectangle(col * COL_W, ROW_FRONT.y, COL_W, ROW_FRONT.h),
+        }))
+      }
 
-      // Stationary — just show frame 0 (idle facing down), no walk animation
-      this.animated = new AnimatedSprite(idleFrames)
-      this.animated.animationSpeed = 0
-      this.animated.anchor.set(0.5, 0.85)
+      this.animated = new AnimatedSprite(frames)
+      this.animated.animationSpeed = 0   // stationary — no walk animation
+      this.animated.anchor.set(0.5, 1.0) // anchor to feet
       this.animated.scale.set(DISPLAY_SCALE)
       this.animated.gotoAndStop(0)
 
-      if (this.fallback) {
-        this.sprite.removeChild(this.fallback)
-        this.fallback = null
-      }
       this.sprite.addChild(this.animated)
     } catch (e) {
-      console.warn('[talia] Sprite sheet not found, using fallback', e)
+      console.warn('[talia] Sprite load failed', e)
+      this.buildFallback()
     }
   }
 
-  private buildRowFrames(tex: Texture, row: number): Texture[] {
-    return Array.from({ length: FRAME_COUNT }, (_, col) =>
-      new Texture({
-        source: tex.source,
-        frame: new Rectangle(col * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H),
-      })
-    )
+  private buildFallback() {
+    const g = new Graphics()
+    const s = 2
+    g.circle(0, -14*s, 7*s);        g.fill(0xf5c5a3)
+    g.ellipse(0, -20*s, 7*s, 4*s);  g.fill(0xf5c842)
+    g.rect(-6*s, -4*s, 12*s, 10*s); g.fill(0x1a1a4e)
+    g.circle(-1*s, 2*s, 2.5*s);     g.fill(0xf5c842)
+    g.circle(1*s,  2*s, 2*s);       g.fill(0x1a1a4e)
+    g.rect(-4*s, 6*s, 3*s, 6*s);    g.fill(0x2a2a6a)
+    g.rect(2*s,  6*s, 3*s, 6*s);    g.fill(0x2a2a6a)
+    this.sprite.addChild(g)
   }
 
   update(delta: number) {
-    // Subtle name tag bob regardless of sprite type
     this.idleTimer += delta * 0.018
-    this.nameTag.y = -52 + Math.sin(this.idleTimer) * 1.5
-
-    // Fallback still bobs
-    if (this.fallback) {
-      this.fallback.y = Math.sin(this.idleTimer) * 1.5
-    }
+    this.nameTag.y = -50 + Math.sin(this.idleTimer) * 1.2
   }
 }
