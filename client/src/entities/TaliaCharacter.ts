@@ -69,11 +69,12 @@ export class TaliaCharacter {
       // Build idle frames from row 0 (facing down)
       const idleFrames = this.buildRowFrames(tex, ROW_DIR.down)
 
+      // Stationary — just show frame 0 (idle facing down), no walk animation
       this.animated = new AnimatedSprite(idleFrames)
-      this.animated.animationSpeed = 0.08  // gentle idle cycle
+      this.animated.animationSpeed = 0
       this.animated.anchor.set(0.5, 0.85)
       this.animated.scale.set(DISPLAY_SCALE)
-      this.animated.play()
+      this.animated.gotoAndStop(0)
 
       if (this.fallback) {
         this.sprite.removeChild(this.fallback)
