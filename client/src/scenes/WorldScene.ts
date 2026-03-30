@@ -245,7 +245,7 @@ export class WorldScene {
   private setupInput() {
     window.addEventListener('keydown', (e) => {
       this.keys[e.code] = true
-      if (e.code === 'Escape') this.dialogue.close()
+      if (e.code === 'Escape') this.dialogue?.close()
       if (e.code === 'Enter' && this.dialogue.isOpen) this.dialogue.submit()
     })
     window.addEventListener('keyup', (e) => { this.keys[e.code] = false })
@@ -275,7 +275,7 @@ export class WorldScene {
       this.player.sprite.x - this.talia.sprite.x,
       this.player.sprite.y - this.talia.sprite.y
     )
-    if (dist < 28 && !this.dialogue.isOpen) this.dialogue.open()
+    if (dist < 28 && this.dialogue.canOpen()) this.dialogue.open()
 
     this.talia.update(delta)
     this.updateCamera()

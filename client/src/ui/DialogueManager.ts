@@ -8,8 +8,13 @@ export class DialogueManager {
   private input: HTMLInputElement
   private sendBtn: HTMLElement
   private voiceBtn: HTMLElement
+  private closeBtn: HTMLElement
   private recognition: SpeechRecognition | null = null
   private isRecording = false
+
+  // Cooldown prevents dialogue from instantly reopening after closing
+  private closedAt = 0
+  private readonly REOPEN_COOLDOWN_MS = 2000
 
   constructor(socket: SocketManager) {
     this.socket = socket
@@ -18,9 +23,10 @@ export class DialogueManager {
     this.input = document.getElementById('dialogue-input') as HTMLInputElement
     this.sendBtn = document.getElementById('btn-send')!
     this.voiceBtn = document.getElementById('btn-voice')!
+    this.closeBtn = document.getElementById('btn-close')!
 
     this.sendBtn.addEventListener('click', () => this.submit())
-    this.voiceBtn.addEventListener('click', () => this.toggleVoice())
+    this.closeBtn.addEventListener('click', () => this.close())
     this.setupSpeechRecognition()
   }
 
@@ -64,17 +70,30 @@ export class DialogueManager {
     }
   }
 
+  canOpen(): boolean {
+    return !this.isOpen && (Date.now() - this.closedAt > this.REOPEN_COOLDOWN_MS)
+  }
+
   open() {
+    if (!this.canOpen()) return
     this.isOpen = true
     this.box.style.display = 'block'
-    this.setText('...')
+    this.setText('hey. you found me.')
     setTimeout(() => this.input.focus(), 50)
   }
 
   close() {
+    if (!this.isOpen) return
     this.isOpen = false
+    this.closedAt = Date.now()
     this.box.style.display = 'none'
     this.input.value = ''
+    if (this.isRecording) {
+      this.recognition?.stop()
+      this.isRecording = false
+      this.voiceBtn.classList.remove('recording')
+      this.voiceBtn.textContent = '🎤'
+    }
   }
 
   async submit() {
@@ -88,7 +107,7 @@ export class DialogueManager {
     try {
       const response = await this.socket.sendMessage(msg)
       this.typewriterText(response)
-    } catch (err) {
+    } catch {
       this.setText('(Something went wrong. Try again.)')
     } finally {
       this.input.disabled = false
