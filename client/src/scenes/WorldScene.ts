@@ -51,45 +51,56 @@ export class WorldScene {
 
   private async loadAndBuild() {
     let tsTex: Texture | null = null
+    let ts7Tex: Texture | null = null
     let propsTex: Texture | null = null
 
+    const md = mapData as any
+
     try {
-      await Assets.load([
-        { alias: 'tileset1', src: mapData.tileSetUrl },
+      const toLoad: Array<{alias: string; src: string}> = [
+        { alias: 'tileset1', src: md.tileSetUrl },
         { alias: 'props3',   src: '/assets/tilesets/3.png' },
-      ])
+      ]
+      if (md.tileSet7Url) toLoad.push({ alias: 'tileset7', src: md.tileSet7Url })
+
+      await Assets.load(toLoad)
       tsTex    = Assets.get('tileset1')
+      ts7Tex   = md.tileSet7Url ? Assets.get('tileset7') : null
       propsTex = Assets.get('props3')
     } catch(e) {
       console.warn('[world] Asset load failed:', e)
     }
 
     if (tsTex) {
-      this.renderTileLayer(tsTex, mapData.bgTiles)
+      // Layer 0: base terrain (1.png)
+      this.renderTileLayer(tsTex, md.bgTiles, 30)
+
+      // Layer 1: overlay tiles if present (e.g. cliff overlay from second sheet)
+      if (md.overlayTiles) {
+        const overlayTex = ts7Tex || tsTex
+        this.renderTileLayer(overlayTex, md.overlayTiles, 35)
+      }
     } else {
       const g = new Graphics()
       g.rect(0, 0, MAP_W*T, MAP_H*T); g.fill(0x4a7c59)
       this.worldContainer.addChild(g)
     }
 
-    // Build collision set from water and cliff tiles
     this.buildCollisionSet()
-
     if (propsTex) this.buildProps(propsTex)
-
     this.spawnCharacters()
   }
 
   // ── ai-town style tile layer renderer ────────────────────────────────────
   // bgTiles[tx][ty] = flat tile index into the tileset
 
-  private renderTileLayer(tsTex: Texture, bgTiles: number[][]) {
+  private renderTileLayer(tsTex: Texture, bgTiles: number[][], sheetCols = TS_COLS) {
     // Pre-build all unique tile textures
     const texCache = new Map<number, Texture>()
     const getTileTex = (tileId: number): Texture => {
       if (texCache.has(tileId)) return texCache.get(tileId)!
-      const col = tileId % TS_COLS
-      const row = Math.floor(tileId / TS_COLS)
+      const col = tileId % sheetCols
+      const row = Math.floor(tileId / sheetCols)
       const tex = new Texture({
         source: tsTex.source,
         frame: new Rectangle(col * T, row * T, T, T),
