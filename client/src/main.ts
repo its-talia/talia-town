@@ -1,17 +1,8 @@
-import { Application, Assets } from 'pixi.js'
+import { Application } from 'pixi.js'
 import { WorldScene } from './scenes/WorldScene'
 import { DialogueManager } from './ui/DialogueManager'
 import { SocketManager } from './systems/SocketManager'
 
-async function tryLoadAsset(alias: string, src: string): Promise<boolean> {
-  try {
-    await Assets.load({ alias, src })
-    return true
-  } catch {
-    console.warn(`[assets] ${alias} not found at ${src} — using placeholder`)
-    return false
-  }
-}
 
 async function main() {
   const app = new Application()
@@ -26,12 +17,8 @@ async function main() {
 
   document.getElementById('game-container')!.appendChild(app.canvas)
 
-  // Load assets — each one is optional; entities fall back to Graphics placeholders
-  await Promise.all([
-    tryLoadAsset('tileset', '/assets/tilesets/tileset.png'),
-    tryLoadAsset('talia', '/assets/sprites/talia-sprite-sheet.png'),
-    tryLoadAsset('player', '/assets/sprites/player-sprite-sheet.png'),
-  ])
+  // TODO: load real sprite/tileset assets once they're finalized
+  // For now all rendering uses Graphics placeholders — no asset loading needed
 
   const socket = new SocketManager()
   const dialogue = new DialogueManager(socket)
